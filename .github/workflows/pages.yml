@@ -1,1 +1,87 @@
-Add GitHub Pages workflow
+name: Deploy MB WORLD 3D
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir site
+
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='site' \
+            --exclude='*.zip' \
+            ./ site/
+
+          count=0
+          for z in MBW-*.zip; do
+            if [ -f "$z" ]; then
+              unzip -oq "$z" -d site
+              count=$((count + 1))
+            fi
+          done
+
+          if [ "$count" -ne 30 ]; then
+            echo "Ожидалось 30 архивов, найдено: $count"
+            exit 1
+          fi
+
+          find site -type f -name '*.part01' -print0 |
+          while IFS= read -r -d '' first; do
+            base="${first%.part01}"
+            output="${base}.assembled"
+
+            for part in "$base".part*; do
+              cat "$part" >> "$output"
+            done
+
+            mv "$output" "$base"
+            rm -f "$base".part*
+          done
+
+          cd site
+
+          sha256sum -c checks.sha256
+
+          rm -f checks.sha256 MANIFEST.txt
+          rm -f INSTRUCTIONS-FIRST.txt ИНСТРУКЦИЯ.txt
+
+          test -f index.html
+
+          echo "Сборка завершена"
+          echo "Файлов: $(find . -type f | wc -l)"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
